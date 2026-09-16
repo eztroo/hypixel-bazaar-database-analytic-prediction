@@ -10,6 +10,7 @@ venv/
 # Data & logs (hasil generate, tidak perlu masuk git)
 data/raw/*
 data/processed/*
+data/archive/*
 data/*.db
 !data/raw/.gitkeep
 !data/processed/.gitkeep
