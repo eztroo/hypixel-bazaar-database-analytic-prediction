@@ -1,0 +1,30 @@
+name: Fetch Bazaar Data
+
+on:
+  schedule:
+    # Tiap 15 menit. Sintaks cron: menit jam tanggal bulan hari-minggu.
+    # Catatan: GitHub Actions kadang delay beberapa menit dari jadwal persis
+    # saat traffic tinggi - ini normal, tidak perlu dikhawatirkan.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: # supaya bisa di-trigger manual dari tab Actions, buat testing
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kode
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependency
+        run: pip install -r requirements.txt
+
+      - name: Jalankan 1 siklus fetch
+        run: python scripts/run_once.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HYPIXEL_API_KEY: ${{ secrets.HYPIXEL_API_KEY }}
