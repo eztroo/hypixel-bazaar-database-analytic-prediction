@@ -2,10 +2,10 @@ name: Fetch Bazaar Data
 
 on:
   schedule:
-    # Tiap 15 menit. Sintaks cron: menit jam tanggal bulan hari-minggu.
+    # Tiap 7 menit. Sintaks cron: menit jam tanggal bulan hari-minggu.
     # Catatan: GitHub Actions kadang delay beberapa menit dari jadwal persis
     # saat traffic tinggi - ini normal, tidak perlu dikhawatirkan.
-    - cron: "*/15 * * * *"
+    - cron: "*/7 * * * *"
   workflow_dispatch: # supaya bisa di-trigger manual dari tab Actions, buat testing
 
 jobs:
