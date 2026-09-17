@@ -19,6 +19,7 @@ load_dotenv(BASE_DIR / ".env")
 HYPIXEL_API_KEY = os.getenv("HYPIXEL_API_KEY", "")
 HYPIXEL_BASE_URL = "https://api.hypixel.net"
 BAZAAR_ENDPOINT = f"{HYPIXEL_BASE_URL}/v2/skyblock/bazaar"  # endpoint ini keyless
+ELECTION_ENDPOINT = f"{HYPIXEL_BASE_URL}/resources/skyblock/election"  # endpoint ini juga keyless
 
 # --- Fetch behaviour (dipakai mulai Phase 5) ---
 FETCH_INTERVAL_SECONDS = int(os.getenv("FETCH_INTERVAL_SECONDS", "60"))

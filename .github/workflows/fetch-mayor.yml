@@ -1,0 +1,28 @@
+name: Fetch Mayor Data
+
+on:
+  schedule:
+    # Tiap 3 jam - mayor/election jarang berubah, tidak perlu sesering Bazaar.
+    - cron: "0 */3 * * *"
+  workflow_dispatch: # supaya bisa di-trigger manual dari tab Actions, buat testing
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kode
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependency
+        run: pip install -r requirements.txt
+
+      - name: Jalankan 1 siklus fetch mayor
+        run: python scripts/run_mayor_once.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HYPIXEL_API_KEY: ${{ secrets.HYPIXEL_API_KEY }}

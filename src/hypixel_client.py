@@ -1,10 +1,12 @@
 """
 Phase 1 - Koneksi ke Hypixel API.
 Phase 2 - Fetch seluruh Bazaar secara reliable (retry + validasi kelengkapan).
+Phase 8 - Fetch data Mayor/Election.
 
-Modul ini cuma bertugas ngambil data mentah dari endpoint Bazaar dan
+Modul ini cuma bertugas ngambil data mentah dari Hypixel API dan
 mengembalikannya sebagai dict Python. Tidak ada logic parsing/cleaning
-di sini (itu tugas Phase 3) - supaya tiap modul punya tanggung jawab jelas.
+di sini (itu tugas Phase 3/data_cleaner) - supaya tiap modul punya
+tanggung jawab jelas.
 """
 
 import time
@@ -19,40 +21,24 @@ class HypixelAPIError(Exception):
     pass
 
 
-def _fetch_bazaar_once(timeout: int = 10) -> dict:
+def _fetch_json_once(url: str, timeout: int = 10) -> dict:
     """
-    Phase 1 - satu kali percobaan fetch, tanpa retry.
-    Dipanggil oleh fetch_bazaar() di bawah (Phase 2), yang menambahkan
-    retry + validasi kelengkapan data di atas function dasar ini.
-
-    Returns:
-        dict mentah dari Hypixel API, contoh struktur:
-        {
-            "success": True,
-            "lastUpdated": 1234567890123,
-            "products": {
-                "ENCHANTED_COAL": {
-                    "product_id": "ENCHANTED_COAL",
-                    "quick_status": {...},
-                    "sell_summary": [...],
-                    "buy_summary": [...]
-                },
-                ...
-            }
-        }
+    Satu kali percobaan fetch ke endpoint Hypixel API manapun yang berbentuk
+    {"success": bool, ...}. Dipakai bareng oleh _fetch_bazaar_once() dan
+    fetch_election() - supaya logic retry/error handling tidak duplikat.
 
     Raises:
         HypixelAPIError: kalau koneksi gagal, timeout, status bukan 200,
-                          atau field "success" dari API bernilai False.
+                          respons bukan JSON valid, atau "success" bernilai False.
     """
     headers = {}
     if config.HYPIXEL_API_KEY:
-        # Endpoint bazaar sebenarnya keyless, tapi kalau key tersedia kita
-        # sertakan saja - tidak ada ruginya dan siap dipakai untuk endpoint lain nanti.
+        # Endpoint bazaar & election sebenarnya keyless, tapi kalau key
+        # tersedia kita sertakan saja - tidak ada ruginya.
         headers["API-Key"] = config.HYPIXEL_API_KEY
 
     try:
-        response = requests.get(config.BAZAAR_ENDPOINT, headers=headers, timeout=timeout)
+        response = requests.get(url, headers=headers, timeout=timeout)
     except requests.exceptions.Timeout:
         raise HypixelAPIError(f"Request timeout setelah {timeout} detik.")
     except requests.exceptions.ConnectionError as e:
@@ -72,6 +58,15 @@ def _fetch_bazaar_once(timeout: int = 10) -> dict:
         raise HypixelAPIError(f"API merespons success=False: {data}")
 
     return data
+
+
+def _fetch_bazaar_once(timeout: int = 10) -> dict:
+    """
+    Phase 1 - satu kali percobaan fetch Bazaar, tanpa retry.
+    Dipanggil oleh fetch_bazaar() di bawah (Phase 2), yang menambahkan
+    retry + validasi kelengkapan data di atas function dasar ini.
+    """
+    return _fetch_json_once(config.BAZAAR_ENDPOINT, timeout=timeout)
 
 
 def _validate_bazaar_data(data: dict) -> None:
@@ -100,8 +95,8 @@ def fetch_bazaar(
     Phase 2 - Fetch Bazaar yang reliable: retry otomatis dengan exponential
     backoff kalau gagal, dan validasi jumlah produk sebelum data diterima.
 
-    Ini function yang dipakai semua kode lain (demo script, dan nanti
-    Phase 4/5) - bukan _fetch_bazaar_once() secara langsung.
+    Ini function yang dipakai semua kode lain (collector, dll) - bukan
+    _fetch_bazaar_once() secara langsung.
 
     Raises:
         HypixelAPIError: kalau semua percobaan retry habis dan tetap gagal,
@@ -124,6 +119,56 @@ def fetch_bazaar(
 
     raise HypixelAPIError(
         f"Gagal fetch Bazaar setelah {retries}x percobaan. Error terakhir: {last_error}"
+    )
+
+
+def fetch_election(
+    timeout: int = 10,
+    retries: int = config.RETRY_ATTEMPTS,
+    backoff_seconds: int = config.RETRY_BACKOFF_SECONDS,
+) -> dict:
+    """
+    Phase 8 - Fetch data mayor & election yang sedang aktif.
+    Endpoint: resources/skyblock/election (keyless).
+
+    Data ini jauh lebih jarang berubah dibanding Bazaar (real-life beberapa
+    hari sekali) - makanya dipanggil dengan jadwal terpisah yang jauh lebih
+    jarang (lihat .github/workflows/fetch-mayor.yml), bukan tiap 7 menit.
+
+    Returns:
+        dict mentah, kira-kira strukturnya:
+        {
+            "success": True,
+            "mayor": {
+                "name": "...",
+                "perks": [{"name": "...", "description": "..."}, ...],
+                "minister": {...}  # opsional, tidak selalu ada
+            },
+            "current": {...}  # cuma ada kalau lagi ada election berjalan
+        }
+
+    Raises:
+        HypixelAPIError: kalau semua retry gagal, atau field "mayor" tidak ada
+                          di respons (tanda data mencurigakan/rusak).
+    """
+    last_error = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            data = _fetch_json_once(config.ELECTION_ENDPOINT, timeout=timeout)
+            if "mayor" not in data:
+                raise HypixelAPIError(f"Field 'mayor' tidak ada di respons: {data}")
+            return data
+        except HypixelAPIError as e:
+            last_error = e
+            if attempt < retries:
+                wait = backoff_seconds * (2 ** (attempt - 1))
+                print(f"[WARN] Percobaan {attempt}/{retries} gagal: {e}")
+                print(f"[WARN] Mencoba lagi dalam {wait} detik...")
+                time.sleep(wait)
+
+    raise HypixelAPIError(
+        f"Gagal fetch election setelah {retries}x percobaan. Error terakhir: {last_error}"
     )
 
 

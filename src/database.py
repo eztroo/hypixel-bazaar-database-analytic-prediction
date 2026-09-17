@@ -52,6 +52,26 @@ class BazaarSnapshot(Base):
     )
 
 
+class MayorSnapshot(Base):
+    """
+    Phase 8 - snapshot mayor/election. Volumenya jauh lebih kecil dari
+    bazaar_snapshots (dipoll tiap beberapa jam, bukan tiap beberapa menit),
+    jadi raw_json disimpan penuh tanpa khawatir soal storage.
+    """
+    __tablename__ = "mayor_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fetched_at = Column(DateTime, nullable=False)
+    mayor_name = Column(String)
+    perks = Column(String)
+    is_election_active = Column(Boolean)
+    raw_json = Column(String)
+
+    __table_args__ = (
+        Index("ix_mayor_fetched_at", "fetched_at"),
+    )
+
+
 engine = create_engine(config.DATABASE_URL)
 
 
@@ -71,6 +91,14 @@ def save_snapshot_to_db(df: pd.DataFrame) -> int:
     df["fetched_at"] = pd.to_datetime(df["fetched_at"])
     df.to_sql(BazaarSnapshot.__tablename__, engine, if_exists="append", index=False)
     return len(df)
+
+
+def save_election_to_db(parsed: dict) -> None:
+    """
+    Phase 8 - simpan 1 snapshot mayor/election (hasil parse_election_snapshot) ke database.
+    """
+    with engine.begin() as conn:
+        conn.execute(MayorSnapshot.__table__.insert().values(**parsed))
 
 
 def count_rows() -> int:
