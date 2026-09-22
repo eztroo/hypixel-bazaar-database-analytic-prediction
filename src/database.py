@@ -65,6 +65,11 @@ class MayorSnapshot(Base):
     mayor_name = Column(String)
     perks = Column(String)
     is_election_active = Column(Boolean)
+    leading_candidate = Column(String)
+    leading_candidate_votes = Column(Integer)
+    leading_candidate_margin = Column(Integer)
+    prev_election_winner_votes = Column(Integer)
+    prev_election_win_margin = Column(Integer)
     raw_json = Column(String)
 
     __table_args__ = (
