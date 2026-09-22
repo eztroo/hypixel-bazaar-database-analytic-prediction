@@ -1,51 +1,92 @@
 """
-Backup: export seluruh isi tabel bazaar_snapshots & mayor_snapshots dari
-database (Supabase/lokal) ke file Parquet terkompresi.
+scripts/export_backup.py
 
-WAJIB dijalankan SEBELUM menghapus data apapun di Supabase - data historis
-Bazaar tidak bisa di-fetch ulang untuk waktu yang sudah lewat, jadi begitu
-dihapus tanpa backup, hilang permanen.
+Export tabel Supabase (Postgres) ke file Parquet lokal, per tabel,
+dengan chunked reading supaya aman untuk dataset besar (jutaan baris).
 
-Cara pakai: python scripts/export_backup.py
-Hasil disimpan di: data/archive/
+Requirement:
+    pip install sqlalchemy psycopg2-binary pandas pyarrow python-dotenv
+
+Environment variable yang dibutuhkan (taruh di .env, sama seperti yang
+dipakai run_once.py -- pakai connection string mode "Session pooling"
+dari Supabase, BUKAN Direct connection, karena alasan IPv4/IPv6 yang
+sama seperti waktu setup GitHub Actions):
+
+    DATABASE_URL=postgresql+psycopg2://<user>:<password>@<host>:<port>/<db>
+
+Usage:
+    python scripts/export_backup.py
+    python scripts/export_backup.py --tables bazaar_snapshots mayor_snapshots
+    python scripts/export_backup.py --outdir backup/2026-09-17 --chunksize 200000
 """
 
-import sys
-from datetime import datetime, timezone
+import os
+import argparse
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 import pandas as pd
+from sqlalchemy import create_engine, inspect
+from dotenv import load_dotenv
 
-from src import config
-from src.database import engine
+load_dotenv()
+
+DEFAULT_TABLES = ["bazaar_snapshots", "mayor_snapshots"]
 
 
-def export_table_to_parquet(table_name: str, output_dir: Path):
-    df = pd.read_sql(f"SELECT * FROM {table_name}", engine)
+def get_engine():
+    db_url = os.environ["DATABASE_URL"]
+    return create_engine(db_url)
 
-    if df.empty:
-        print(f"[INFO] Tabel '{table_name}' kosong, tidak ada yang diekspor.")
-        return None
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    file_path = output_dir / f"{table_name}_backup_{timestamp}.parquet"
+def export_table(engine, table_name: str, outdir: Path, chunksize: int):
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_path = outdir / f"{table_name}.parquet"
 
-    df.to_parquet(file_path, compression="snappy", index=False)
+    print(f"[export] {table_name} -> {out_path}")
 
-    size_kb = file_path.stat().st_size / 1024
-    print(f"[OK] {len(df)} baris dari '{table_name}' -> {file_path.name} ({size_kb:.1f} KB)")
-    return file_path
+    chunks = []
+    total_rows = 0
+    # baca per-chunk supaya tidak membebani RAM untuk tabel jutaan baris
+    for i, chunk in enumerate(
+        pd.read_sql_table(table_name, con=engine, chunksize=chunksize)
+    ):
+        chunks.append(chunk)
+        total_rows += len(chunk)
+        print(f"  chunk {i}: +{len(chunk)} baris (total {total_rows})")
+
+    if not chunks:
+        print(f"  [WARN] tabel {table_name} kosong, dilewati.")
+        return
+
+    df = pd.concat(chunks, ignore_index=True)
+    df.to_parquet(out_path, engine="pyarrow", compression="snappy", index=False)
+    size_mb = out_path.stat().st_size / 1e6
+    print(f"  selesai: {total_rows} baris, {size_mb:.2f} MB -> {out_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Export tabel Supabase ke Parquet")
+    parser.add_argument("--tables", nargs="+", default=DEFAULT_TABLES,
+                         help="Nama tabel yang mau di-export (default: bazaar_snapshots mayor_snapshots)")
+    parser.add_argument("--outdir", default="backup",
+                         help="Folder output, mis. backup/2026-09-17")
+    parser.add_argument("--chunksize", type=int, default=100_000,
+                         help="Jumlah baris per chunk saat membaca dari DB")
+    args = parser.parse_args()
+
+    engine = get_engine()
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    outdir = Path(args.outdir)
+    for table in args.tables:
+        if table not in existing_tables:
+            print(f"[SKIP] tabel '{table}' tidak ditemukan di database.")
+            continue
+        export_table(engine, table, outdir, args.chunksize)
+
+    print("\nSelesai. Cek isi folder:", outdir.resolve())
 
 
 if __name__ == "__main__":
-    archive_dir = config.BASE_DIR / "data" / "archive"
-
-    print("=== Backup database sebelum penghapusan ===\n")
-    export_table_to_parquet("bazaar_snapshots", archive_dir)
-    export_table_to_parquet("mayor_snapshots", archive_dir)
-
-    print(f"\nSelesai. File backup ada di: {archive_dir}")
-    print("Setelah dicek file-nya valid, baru aman untuk hapus data di Supabase.")
+    main()
