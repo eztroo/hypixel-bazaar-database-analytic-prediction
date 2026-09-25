@@ -9,6 +9,7 @@ pandas>=2.1.0
 # --- Phase 6: database (SQLite untuk lokal/testing, Postgres/Supabase saat deploy) ---
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
+psycopg[binary]>=3.1.0  # sebagian format connection string Supabase pakai skema postgresql+psycopg:// (driver v3, beda dari psycopg2)
 pyarrow>=14.0.0  # untuk export/backup ke format Parquet
 
 # --- Phase 10-12: EDA & Machine Learning ---
