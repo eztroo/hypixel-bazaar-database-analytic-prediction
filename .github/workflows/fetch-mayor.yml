@@ -9,6 +9,10 @@ on:
 jobs:
   fetch:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: fetch-bazaar
+      cancel-in-progress: true
     steps:
       - name: Checkout kode
         uses: actions/checkout@v4
