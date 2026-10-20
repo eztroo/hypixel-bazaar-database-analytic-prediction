@@ -25,7 +25,7 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -38,30 +38,37 @@ def get_engine():
     return create_engine(db_url)
 
 
-def export_table(engine, table_name: str, outdir: Path, chunksize: int):
+def export_table(engine, table_name, outdir, chunksize=200_000, start_id=0):
+    """Export tabel ke Parquet per-batch. start_id: lanjut dari id terakhir yang sudah pernah di-export."""
+    outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    out_path = outdir / f"{table_name}.parquet"
 
-    print(f"[export] {table_name} -> {out_path}")
+    last_id, part, total = start_id, 0, 0
+    query = text(f"SELECT * FROM {table_name} WHERE id > :last_id ORDER BY id LIMIT :n")
 
-    chunks = []
-    total_rows = 0
-    # baca per-chunk supaya tidak membebani RAM untuk tabel jutaan baris
-    for i, chunk in enumerate(
-        pd.read_sql_table(table_name, con=engine, chunksize=chunksize)
-    ):
-        chunks.append(chunk)
-        total_rows += len(chunk)
-        print(f"  chunk {i}: +{len(chunk)} baris (total {total_rows})")
+    with engine.connect() as conn:
+        if engine.dialect.name == "postgresql":
+            try:
+                conn.exec_driver_sql("SET statement_timeout = 0")
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                print(f"[warn] gagal set statement_timeout: {e}")
 
-    if not chunks:
-        print(f"  [WARN] tabel {table_name} kosong, dilewati.")
-        return
+        while True:
+            df = pd.read_sql(query, conn, params={"last_id": last_id, "n": chunksize})
+            conn.commit()  # tutup transaksi: lepas lock baca sebelum batch berikutnya
+            if df.empty:
+                break
+            part += 1
+            path = outdir / f"{table_name}_id{int(df['id'].iloc[0])}-{int(df['id'].iloc[-1])}.parquet"
+            df.to_parquet(path, compression="snappy", index=False)
+            last_id = int(df["id"].iloc[-1])
+            total += len(df)
+            print(f"[export] {table_name}: part {part} -> {len(df):,} baris (total {total:,}), id terakhir {last_id}")
 
-    df = pd.concat(chunks, ignore_index=True)
-    df.to_parquet(out_path, engine="pyarrow", compression="snappy", index=False)
-    size_mb = out_path.stat().st_size / 1e6
-    print(f"  selesai: {total_rows} baris, {size_mb:.2f} MB -> {out_path}")
+    print(f"[export] {table_name} selesai: {total:,} baris. id terakhir yang ke-export: {last_id}")
+    return total
 
 
 def main():
